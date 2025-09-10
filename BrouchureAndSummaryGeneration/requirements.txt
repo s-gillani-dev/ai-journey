@@ -1,0 +1,12 @@
+python-dotenv
+jupyterlab
+ipywidgets
+requests
+numpy
+pandas
+scipy
+openai
+jupyter-dash
+beautifulsoup4
+pydub
+ollama
