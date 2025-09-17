@@ -1,0 +1,31 @@
+# -------------------------------
+# API Test File: api.http
+# Purpose:
+#   - Contains test requests for the FastAPI project.
+#   - Allows quick testing of POST and GET endpoints 
+#     for the Bands API.
+# Usage:
+#   - Open in VS Code with REST Client extension.
+#   - Click "Send Request" above each request block.
+# -------------------------------
+
+# Create a new band (Annotated version).
+# Endpoint: POST /annotated/bands
+# Body:
+#   - name: Name of the band (string)
+#   - genre: Genre of the band (string, case-insensitive, normalized by validator)
+POST http://127.0.0.1:8000/annotated/bands
+Content-Type: application/json
+
+{
+    "name" : "Borders of canada'j",
+    "genre": "pop-ROCK" 
+}
+
+###
+
+# Retrieve bands filtered by genre.
+# Endpoint: GET /bands
+# Query params:
+#   - genre (optional): Filter bands by genre (e.g., Electronic)
+GET  http://127.0.0.1:8000/basic/bands?genre=electronic

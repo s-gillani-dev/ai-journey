@@ -1,0 +1,40 @@
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Virtual environments
+.env
+.venv
+env/
+venv/
+fastapi-venv/
+
+# Jupyter Notebook checkpoints
+.ipynb_checkpoints
+
+# VS Code settings
+.vscode/
+
+# macOS system files
+.DS_Store
+
+# Logs
+*.log
+
+# Compiled build artifacts
+build/
+dist/
+*.egg-info/
+
+# Model weights (huge files, keep only if small test models)
+models/*.gguf
+models/*.bin
+
+# Ollama data (if you don’t want to commit pulled images/models)
+.ollama/
+
+# Chroma DB or vector DB local storage
+chrome_langchain_db/
+*.sqlite
