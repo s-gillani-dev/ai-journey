@@ -14,12 +14,16 @@
 # Body:
 #   - name: Name of the band (string)
 #   - genre: Genre of the band (string, case-insensitive, normalized by validator)
-POST http://127.0.0.1:8000/annotated/bands
+POST http://127.0.0.1:8000/bands
 Content-Type: application/json
 
 {
-    "name" : "Borders of canada'j",
-    "genre": "pop-ROCK" 
+    "name" : "Metallica",
+    "genre": "Metal",
+    "albums": [
+        {"title": "The Dark Side of the Moon", "release_date": "1973-03-01"},
+        {"title": "The Wall", "release_date": "1979-11-30"}
+    ]
 }
 
 ###
@@ -28,4 +32,6 @@ Content-Type: application/json
 # Endpoint: GET /bands
 # Query params:
 #   - genre (optional): Filter bands by genre (e.g., Electronic)
-GET  http://127.0.0.1:8000/basic/bands?genre=electronic
+GET  http://127.0.0.1:8000/bands
+###
+GET  http://127.0.0.1:8000/bands?genre=metal
