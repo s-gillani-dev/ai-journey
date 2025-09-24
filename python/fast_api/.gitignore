@@ -35,6 +35,9 @@ models/*.bin
 # Ollama data (if you don’t want to commit pulled images/models)
 .ollama/
 
+# migration files
+migrations/
+
 # Chroma DB or vector DB local storage
 chrome_langchain_db/
 *.sqlite
