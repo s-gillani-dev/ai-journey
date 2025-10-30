@@ -35,3 +35,22 @@ Content-Type: application/json
 GET  http://127.0.0.1:8000/bands
 ###
 GET  http://127.0.0.1:8000/bands?genre=metal
+
+
+### Login and get JWT Token
+# Endpoint: POST /token
+# Body:
+#   - username: alice
+#   - password: secret123
+POST http://127.0.0.1:8000/token
+Content-Type: application/x-www-form-urlencoded
+
+username=alice&password=secret123
+
+###
+
+# Test protected route with token
+# Copy the access_token from the previous response
+# and paste it below in Authorization header
+GET http://127.0.0.1:8000/protected
+Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJhbGljZSIsImV4cCI6MTc2MTgxMjAwMH0.dXBeljkXT3AI1OYp1MVW0pOXCZbi1_gJv_uWp7MR-SQ
