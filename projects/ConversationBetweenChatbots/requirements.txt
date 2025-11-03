@@ -1,0 +1,5 @@
+python-dotenv
+openai
+ollama
+jupyterlab
+jupyter-dash
