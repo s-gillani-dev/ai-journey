@@ -1,0 +1,161 @@
+{
+  "sess-b89c": {
+    "user_id": "guest_130e8fcc",
+    "session_id": "sess-b89c",
+    "active_agent": "OrderTaker",
+    "age_verified": false,
+    "tool_budget_remaining": 5,
+    "order_status": "DRAFT",
+    "last_ambiguous_intent": null,
+    "ambiguous_retries": 0,
+    "cart": {},
+    "active_intent": "ORDERING",
+    "context_scope": "FULL_CATALOG",
+    "authority_hint": "Ambiguous query: Full catalog access authorized.",
+    "pending_deferred_sku": null,
+    "last_action_sku": null,
+    "last_quantity": null,
+    "last_action_type": null,
+    "pending_items": [],
+    "turn_id": 9,
+    "active_context": {
+      "PZ-PEP": {
+        "sku": "PZ-PEP",
+        "name": "Pepperoni Pizza",
+        "mentioned": true,
+        "selected": false,
+        "last_mentioned_turn": 600,
+        "confidence": 1.0
+      }
+    },
+    "history": [
+      {
+        "role": "assistant",
+        "metadata": null,
+        "content": "Welcome to DineFlow. I'm your AI ordering assistant.\n\nTry asking:\n  \u2022 \"anything spicy?\"\n  \u2022 \"add 2 pepperoni pizzas\"\n  \u2022 \"what's on the menu?\"",
+        "options": null
+      },
+      {
+        "role": "user",
+        "metadata": null,
+        "content": "add Pepperoni Pizza",
+        "options": null
+      },
+      {
+        "role": "assistant",
+        "metadata": null,
+        "content": "Excellent choice! I've added Pepperoni Pizza to your order. Anything else?",
+        "options": null
+      },
+      {
+        "role": "user",
+        "metadata": null,
+        "content": "add one more",
+        "options": null
+      },
+      {
+        "role": "assistant",
+        "metadata": null,
+        "content": "Excellent! I've added Pepperoni Pizza to your order. Anything else?",
+        "options": null
+      },
+      {
+        "role": "user",
+        "metadata": null,
+        "content": "cancel both",
+        "options": null
+      },
+      {
+        "role": "assistant",
+        "metadata": null,
+        "content": "No problem. I've removed Pepperoni Pizza from your cart.",
+        "options": null
+      },
+      {
+        "role": "user",
+        "metadata": null,
+        "content": "add 2 more",
+        "options": null
+      },
+      {
+        "role": "assistant",
+        "metadata": null,
+        "content": "Excellent choice! I've added 2 Pepperoni Pizza to your order. Anything else?",
+        "options": null
+      },
+      {
+        "role": "user",
+        "metadata": null,
+        "content": "remove 2 from cart",
+        "options": null
+      },
+      {
+        "role": "assistant",
+        "metadata": null,
+        "content": "No problem. I've removed Pepperoni Pizza from your cart.",
+        "options": null
+      },
+      {
+        "role": "user",
+        "metadata": null,
+        "content": "add one",
+        "options": null
+      },
+      {
+        "role": "assistant",
+        "metadata": null,
+        "content": "Excellent! I've added Pepperoni Pizza to your order. Anything else?",
+        "options": null
+      },
+      {
+        "role": "user",
+        "metadata": null,
+        "content": "remove 2 from cart",
+        "options": null
+      },
+      {
+        "role": "assistant",
+        "metadata": null,
+        "content": "No problem. I've removed Pepperoni Pizza from your cart.",
+        "options": null
+      },
+      {
+        "role": "user",
+        "metadata": null,
+        "content": "remove 2 more",
+        "options": null
+      },
+      {
+        "role": "assistant",
+        "metadata": null,
+        "content": "No problem. I've removed Pepperoni Pizza from your cart.",
+        "options": null
+      },
+      {
+        "role": "user",
+        "content": "remove 2 more"
+      },
+      {
+        "role": "assistant",
+        "content": "I'm here to help! What can I get for you?"
+      }
+    ],
+    "memory_window": [
+      {
+        "agent": "OrderTaker",
+        "user": "remove 2 from cart",
+        "dine_flow": "No problem. I've removed Pepperoni Pizza from your cart."
+      },
+      {
+        "agent": "OrderTaker",
+        "user": "remove 2 more",
+        "dine_flow": "No problem. I've removed Pepperoni Pizza from your cart."
+      },
+      {
+        "agent": "OrderTaker",
+        "user": "remove 2 more",
+        "dine_flow": "I'm here to help! What can I get for you?"
+      }
+    ]
+  }
+}

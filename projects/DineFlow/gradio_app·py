@@ -1,0 +1,1352 @@
+# # projects/DineFlow/gradio_app.py
+# import uuid
+# import json
+# import warnings
+# import os
+# import gradio as gr
+# from state_machine.types import SessionState, KitchenSnapshot
+# from orchestration.golden_loop import golden_loop
+# from orchestration.memory_manager import MemoryManager
+
+# os.environ["TOKENIZERS_PARALLELISM"] = "false"
+# warnings.filterwarnings("ignore", category=FutureWarning, module="huggingface_hub")
+
+# BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+# STATE_DB_PATH = os.path.join(BASE_DIR, "session_store.json")
+
+
+# # ── Session Persistence ────────────────────────────────────────────────────────
+
+# def get_session_for_user(user_id: str) -> SessionState:
+#     if os.path.exists(STATE_DB_PATH):
+#         with open(STATE_DB_PATH, "r") as f:
+#             try:
+#                 data = json.load(f)
+#                 for sess_id, state in data.items():
+#                     if state.get("user_id") == user_id and state.get("order_status") == "DRAFT":
+#                         return SessionState(**state)
+#             except json.JSONDecodeError:
+#                 pass
+#     return SessionState(
+#         session_id=f"sess-{str(uuid.uuid4())[:4]}",
+#         user_id=user_id,
+#         active_agent="OrderTaker",
+#         tool_budget_remaining=5
+#     )
+
+
+# def save_session_state(session: SessionState):
+#     data = {}
+#     try:
+#         if os.path.exists(STATE_DB_PATH):
+#             with open(STATE_DB_PATH, "r") as f:
+#                 content = f.read()
+#                 data = json.loads(content) if content else {}
+#         data[session.session_id] = session.model_dump()
+#         with open(STATE_DB_PATH, "w") as f:
+#             json.dump(data, f, indent=2)
+#     except Exception as e:
+#         print(f"Critical: Could not save session state: {e}")
+
+
+# def format_cart(cart: dict, all_menu_items) -> str:
+#     """Renders cart as readable text for the status panel."""
+#     if not cart:
+#         return "Empty"
+#     item_map = {item.sku: item.name for item in all_menu_items}
+#     lines = []
+#     for sku, qty in cart.items():
+#         name = item_map.get(sku, sku)
+#         lines.append(f"• {name} × {qty}")
+#     return "\n".join(lines)
+
+
+# # ── Core Chat Handler ──────────────────────────────────────────────────────────
+
+# def chat(user_message: str, history: list, session_state: dict, memory_state: dict):
+#     """
+#     Stateless handler called by Gradio on each message.
+#     Session and memory are stored in Gradio gr.State objects and passed in/out.
+#     """
+#     if not user_message.strip():
+#         return history, session_state, memory_state, "", ""
+
+#     # Rehydrate session from state dict
+#     session = SessionState(**session_state)
+#     memory = MemoryManager(session_id=session.session_id)
+#     memory.window = memory_state.get("window", [])
+
+#     kitchen = KitchenSnapshot(load_percentage=40)
+
+#     try:
+#         response = golden_loop(
+#             session=session,
+#             user_input=user_message,
+#             kitchen=kitchen,
+#             memory=memory
+#         )
+#         save_session_state(session)
+#     except Exception as e:
+#         response = f"⚠️ System error: {e}"
+
+#     # Update history for Gradio chatbot (Gradio 6.x dict format)
+#     history.append({"role": "user", "content": user_message})
+#     history.append({"role": "assistant", "content": response})
+
+#     # Build status string
+#     from orchestration.golden_loop import all_menu_items
+#     cart_str = format_cart(session.cart, all_menu_items)
+#     status = (
+#         f"🤖 Agent: {session.active_agent}\n"
+#         f"🎯 Budget: {session.tool_budget_remaining}/5\n"
+#         f"🍳 Kitchen: {kitchen.load_percentage}%\n"
+#         f"📋 Session: {session.session_id}\n\n"
+#         f"🛒 Cart:\n{cart_str}"
+#     )
+
+#     return (
+#         history,
+#         session.model_dump(),
+#         {"window": memory.window},
+#         "",        # clear input box
+#         status
+#     )
+
+
+# def new_session():
+#     """Resets to a fresh session."""
+#     user_id = f"guest_{str(uuid.uuid4())[:6]}"
+#     session = get_session_for_user(user_id)
+#     memory = MemoryManager(session_id=session.session_id)
+#     return [{"role": "assistant", "content": "🆕 New session started. How can I help you?"}], session.model_dump(), {"window": []}, "", "🆕 New session started"
+
+
+# # ── UI ─────────────────────────────────────────────────────────────────────────
+
+# CUSTOM_CSS = """
+# @import url('https://fonts.googleapis.com/css2?family=DM+Serif+Display:ital@0;1&family=DM+Mono:wght@300;400;500&display=swap');
+
+# :root {
+#     --bg:        #0f0e0d;
+#     --surface:   #1a1916;
+#     --border:    #2e2c28;
+#     --accent:    #e8a041;
+#     --accent2:   #c45c2e;
+#     --text:      #e8e4dc;
+#     --muted:     #7a7567;
+#     --user-bg:   #1e2a1a;
+#     --bot-bg:    #1a1916;
+#     --radius:    12px;
+# }
+
+# .message-wrap * { color: var(--text) !important; }
+# .prose * { color: var(--text) !important; }
+
+# body, .gradio-container {
+#     background: var(--bg) !important;
+#     font-family: 'DM Mono', monospace !important;
+#     color: var(--text) !important;
+# }
+
+# /* Header */
+# .dineflow-header {
+#     text-align: center;
+#     padding: 2rem 0 1rem;
+#     border-bottom: 1px solid var(--border);
+#     margin-bottom: 1.5rem;
+# }
+
+# .dineflow-header h1 {
+#     font-family: 'DM Serif Display', serif !important;
+#     font-size: 2.8rem;
+#     color: var(--accent);
+#     letter-spacing: -0.02em;
+#     margin: 0;
+# }
+
+# .dineflow-header p {
+#     color: var(--muted);
+#     font-size: 0.8rem;
+#     letter-spacing: 0.15em;
+#     text-transform: uppercase;
+#     margin: 0.4rem 0 0;
+# }
+
+# /* Chatbot */
+# #chatbox {
+#     background: var(--surface) !important;
+#     border: 1px solid var(--border) !important;
+#     border-radius: var(--radius) !important;
+# }
+
+# #chatbox .message.user {
+#     background: var(--user-bg) !important;
+#     border: 1px solid #2a3a26 !important;
+#     color: var(--text) !important;
+#     border-radius: 10px 10px 2px 10px !important;
+#     font-family: 'DM Mono', monospace !important;
+# }
+
+# #chatbox .message.bot {
+#     background: var(--bot-bg) !important;
+#     border: 1px solid var(--border) !important;
+#     color: var(--text) !important;
+#     border-radius: 10px 10px 10px 2px !important;
+#     font-family: 'DM Mono', monospace !important;
+# }
+
+# /* Input */
+# #msg-input textarea {
+#     background: var(--surface) !important;
+#     border: 1px solid var(--border) !important;
+#     color: var(--text) !important;
+#     font-family: 'DM Mono', monospace !important;
+#     border-radius: var(--radius) !important;
+#     font-size: 0.95rem !important;
+# }
+
+# #msg-input textarea:focus {
+#     border-color: var(--accent) !important;
+#     box-shadow: 0 0 0 2px rgba(232, 160, 65, 0.15) !important;
+# }
+
+# /* Buttons */
+# #send-btn {
+#     background: linear-gradient(135deg, var(--accent), var(--accent2)) !important;
+#     border: none !important;
+#     color: #0f0e0d !important;
+#     font-family: 'DM Mono', monospace !important;
+#     font-weight: 500 !important;
+#     border-radius: var(--radius) !important;
+#     letter-spacing: 0.05em !important;
+# }
+
+# #send-btn:hover {
+#     opacity: 0.9 !important;
+#     transform: translateY(-1px) !important;
+# }
+
+# #new-session-btn {
+#     background: transparent !important;
+#     border: 1px solid var(--border) !important;
+#     color: var(--muted) !important;
+#     font-family: 'DM Mono', monospace !important;
+#     border-radius: var(--radius) !important;
+#     font-size: 0.8rem !important;
+# }
+
+# #new-session-btn:hover {
+#     border-color: var(--accent) !important;
+#     color: var(--accent) !important;
+# }
+
+# /* Status Panel */
+# #status-panel textarea, #status-panel .prose {
+#     background: var(--surface) !important;
+#     border: 1px solid var(--border) !important;
+#     color: var(--muted) !important;
+#     font-family: 'DM Mono', monospace !important;
+#     font-size: 0.78rem !important;
+#     border-radius: var(--radius) !important;
+#     line-height: 1.8 !important;
+# }
+
+# /* Labels */
+# label span {
+#     color: var(--muted) !important;
+#     font-size: 0.72rem !important;
+#     letter-spacing: 0.12em !important;
+#     text-transform: uppercase !important;
+#     font-family: 'DM Mono', monospace !important;
+# }
+
+# /* Scrollbar */
+# ::-webkit-scrollbar { width: 4px; }
+# ::-webkit-scrollbar-track { background: var(--bg); }
+# ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+# ::-webkit-scrollbar-thumb:hover { background: var(--muted); }
+# """
+
+# WELCOME_MESSAGE = (
+#     "Welcome to DineFlow. I'm your AI ordering assistant.\n\n"
+#     "Try asking:\n"
+#     "  • \"anything spicy?\"\n"
+#     "  • \"add 2 pepperoni pizzas\"\n"
+#     "  • \"what's on the menu?\""
+# )
+
+# def build_interface():
+#     user_id = f"guest_{str(uuid.uuid4())[:6]}"
+#     initial_session = get_session_for_user(user_id)
+
+#     with gr.Blocks(title="DineFlow", css=CUSTOM_CSS) as demo:
+
+#         # Header
+#         gr.HTML("""
+#         <div class="dineflow-header">
+#             <h1>DineFlow</h1>
+#             <p>AI-powered restaurant ordering</p>
+#         </div>
+#         """)
+
+#         # State
+#         session_state = gr.State(initial_session.model_dump())
+#         memory_state = gr.State({"window": []})
+
+#         with gr.Row():
+#             # Chat column
+#             with gr.Column(scale=3):
+#                 chatbot = gr.Chatbot(
+#                     value=[{"role": "assistant", "content": WELCOME_MESSAGE}],
+#                     elem_id="chatbox",
+#                     height=500,
+#                     show_label=False,
+#                     type="messages",
+                    
+#                 )
+#                 with gr.Row():
+#                     msg_input = gr.Textbox(
+#                         placeholder="Type your order or question...",
+#                         show_label=False,
+#                         elem_id="msg-input",
+#                         scale=5,
+#                         container=False,
+#                     )
+#                     send_btn = gr.Button("Send →", elem_id="send-btn", scale=1, min_width=80)
+
+#             # Status column
+#             with gr.Column(scale=1):
+#                 status_box = gr.Textbox(
+#                     label="Session Status",
+#                     value=(
+#                         f"🤖 Agent: OrderTaker\n"
+#                         f"🎯 Budget: 5/5\n"
+#                         f"🍳 Kitchen: 40%\n"
+#                         f"📋 Session: {initial_session.session_id}\n\n"
+#                         f"🛒 Cart:\nEmpty"
+#                     ),
+#                     elem_id="status-panel",
+#                     interactive=False,
+#                     lines=10,
+#                 )
+#                 new_btn = gr.Button("↺ New Session", elem_id="new-session-btn")
+
+#         # Wire up send
+#         send_inputs  = [msg_input, chatbot, session_state, memory_state]
+#         send_outputs = [chatbot, session_state, memory_state, msg_input, status_box]
+
+#         send_btn.click(chat, inputs=send_inputs, outputs=send_outputs)
+#         msg_input.submit(chat, inputs=send_inputs, outputs=send_outputs)
+
+#         # Wire up new session
+#         new_btn.click(
+#             new_session,
+#             inputs=[],
+#             outputs=[chatbot, session_state, memory_state, msg_input, status_box]
+#         )
+
+#     return demo
+
+
+# if __name__ == "__main__":
+#     demo = build_interface()
+#     demo.launch(server_name="0.0.0.0", server_port=7860, show_error=True)
+
+
+
+
+
+
+# # projects/DineFlow/gradio_app.py
+# import uuid
+# import json
+# import warnings
+# import os
+# import gradio as gr
+# from state_machine.types import SessionState, KitchenSnapshot
+# from orchestration.golden_loop import golden_loop
+# from orchestration.memory_manager import MemoryManager
+
+# os.environ["TOKENIZERS_PARALLELISM"] = "false"
+# warnings.filterwarnings("ignore", category=FutureWarning, module="huggingface_hub")
+
+# BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+# STATE_DB_PATH = os.path.join(BASE_DIR, "session_store.json")
+
+
+# # ── Session Persistence ────────────────────────────────────────────────────────
+
+# def get_session_for_user(user_id: str) -> SessionState:
+#     if os.path.exists(STATE_DB_PATH):
+#         with open(STATE_DB_PATH, "r") as f:
+#             try:
+#                 data = json.load(f)
+#                 for sess_id, state in data.items():
+#                     if state.get("user_id") == user_id and state.get("order_status") == "DRAFT":
+#                         return SessionState(**state)
+#             except json.JSONDecodeError:
+#                 pass
+#     return SessionState(
+#         session_id=f"sess-{str(uuid.uuid4())[:4]}",
+#         user_id=user_id,
+#         active_agent="OrderTaker",
+#         tool_budget_remaining=5
+#     )
+
+
+# def save_session_state(session: SessionState):
+#     data = {}
+#     try:
+#         if os.path.exists(STATE_DB_PATH):
+#             with open(STATE_DB_PATH, "r") as f:
+#                 content = f.read()
+#                 data = json.loads(content) if content else {}
+#         data[session.session_id] = session.model_dump()
+#         with open(STATE_DB_PATH, "w") as f:
+#             json.dump(data, f, indent=2)
+#     except Exception as e:
+#         print(f"Critical: Could not save session state: {e}")
+
+
+# def load_chat_history(session_id: str) -> list:
+#     """
+#     Rebuilds chat history from session_store for display on reload.
+
+#     We store the full turn history under session_store[session_id]["history"]
+#     as a list of {"role": ..., "content": ...} dicts — the same format
+#     Gradio's Chatbot expects. On reload, we read this back and restore
+#     the visual history so the user sees their prior conversation.
+
+#     This is separate from memory_manager.window (short-term sliding window
+#     for LLM context) and ChromaDB (long-term semantic retrieval). This is
+#     purely the display layer.
+#     """
+#     if not os.path.exists(STATE_DB_PATH):
+#         return []
+#     try:
+#         with open(STATE_DB_PATH, "r") as f:
+#             data = json.load(f)
+#         for sess_id, state in data.items():
+#             if sess_id == session_id:
+#                 return state.get("history", [])
+#     except (json.JSONDecodeError, KeyError):
+#         pass
+#     return []
+
+
+# def save_chat_history(session_id: str, history: list):
+#     """Persists the display history alongside session state."""
+#     if not os.path.exists(STATE_DB_PATH):
+#         return
+#     try:
+#         with open(STATE_DB_PATH, "r") as f:
+#             data = json.load(f)
+#         if session_id in data:
+#             data[session_id]["history"] = history
+#             with open(STATE_DB_PATH, "w") as f:
+#                 json.dump(data, f, indent=2)
+#     except Exception as e:
+#         print(f"Critical: Could not save chat history: {e}")
+
+
+# def format_cart(cart: dict, all_menu_items) -> str:
+#     if not cart:
+#         return "Empty"
+#     item_map = {item.sku: item.name for item in all_menu_items}
+#     lines = [f"• {item_map.get(sku, sku)} × {qty}" for sku, qty in cart.items()]
+#     return "\n".join(lines)
+
+
+# def build_status(session: SessionState, kitchen: KitchenSnapshot, all_menu_items) -> str:
+#     cart_str = format_cart(session.cart, all_menu_items)
+#     return (
+#         f"🤖 Agent: {session.active_agent}\n"
+#         f"🎯 Budget: {session.tool_budget_remaining}/5\n"
+#         f"🍳 Kitchen: {kitchen.load_percentage}%\n"
+#         f"📋 Session: {session.session_id}\n\n"
+#         f"🛒 Cart:\n{cart_str}"
+#     )
+
+
+# # ── Core Chat Handler ──────────────────────────────────────────────────────────
+
+# def chat(user_message: str, history: list, session_state: dict, memory_state: dict):
+#     """
+#     Stateless handler called by Gradio on each message.
+#     Session, memory, and chat history are all persisted to disk so they
+#     survive page reloads. On reload, on_load() rehydrates them.
+#     """
+#     if not user_message.strip():
+#         return history, session_state, memory_state, "", ""
+
+#     session = SessionState(**session_state)
+#     memory = MemoryManager(session_id=session.session_id)
+#     memory.window = memory_state.get("window", [])
+#     kitchen = KitchenSnapshot(load_percentage=40)
+
+#     try:
+#         response = golden_loop(
+#             session=session,
+#             user_input=user_message,
+#             kitchen=kitchen,
+#             memory=memory
+#         )
+#         save_session_state(session)
+#     except Exception as e:
+#         response = f"⚠️ System error: {e}"
+
+#     history.append({"role": "user", "content": user_message})
+#     history.append({"role": "assistant", "content": response})
+
+#     # Persist display history so reload can restore it
+#     save_chat_history(session.session_id, history)
+
+#     # Persist the short-term memory window so on_load() can restore LLM context on reload
+#     if os.path.exists(STATE_DB_PATH):
+#         try:
+#             with open(STATE_DB_PATH, "r") as f:
+#                 _data = json.load(f)
+#             if session.session_id in _data:
+#                 _data[session.session_id]["memory_window"] = memory.window
+#                 with open(STATE_DB_PATH, "w") as f:
+#                     json.dump(_data, f, indent=2)
+#         except Exception:
+#             pass
+
+#     from orchestration.golden_loop import all_menu_items
+#     status = build_status(session, kitchen, all_menu_items)
+
+#     return (
+#         history,
+#         session.model_dump(),
+#         {"window": memory.window},
+#         "",
+#         status
+#     )
+
+
+# def on_load(request: gr.Request):
+#     """
+#     Fires on every page load (initial load and reload).
+
+#     Isolation strategy:
+#         Each browser tab gets a unique user_id via the 'uid' query param.
+#         On first load:  ?uid is absent → generate a new uid, create fresh session
+#         On reload:      ?uid=<existing> → look up session in session_store.json,
+#                         restore session state, memory window, and chat history
+
+#     This gives each tab a stable identity across reloads without requiring
+#     browser cookies or localStorage. Users can also bookmark
+#     http://localhost:7860/?uid=<their-uid> to return to a specific session.
+
+#     Simultaneous tabs:
+#         Each tab passes a different uid, so they each get their own
+#         SessionState and MemoryManager.window — fully isolated.
+#     """
+#     from orchestration.golden_loop import all_menu_items
+
+#     uid = request.query_params.get("uid", None)
+#     if not uid:
+#         uid = f"guest_{str(uuid.uuid4())[:8]}"
+
+#     session = get_session_for_user(uid)
+#     history = load_chat_history(session.session_id)
+#     kitchen = KitchenSnapshot(load_percentage=40)
+
+#     # Restore memory window from session store if available
+#     memory_window = []
+#     if os.path.exists(STATE_DB_PATH):
+#         try:
+#             with open(STATE_DB_PATH, "r") as f:
+#                 data = json.load(f)
+#             for sess_id, state in data.items():
+#                 if sess_id == session.session_id:
+#                     memory_window = state.get("memory_window", [])
+#                     break
+#         except Exception:
+#             pass
+
+#     if not history:
+#         history = [{"role": "assistant", "content": WELCOME_MESSAGE}]
+
+#     status = build_status(session, kitchen, all_menu_items)
+
+#     # Return uid so the JS redirect can append it to the URL
+#     return (
+#         history,
+#         session.model_dump(),
+#         {"window": memory_window},
+#         status,
+#         uid
+#     )
+
+
+# def new_session():
+#     """Resets to a fresh session."""
+#     from orchestration.golden_loop import all_menu_items
+#     uid = f"guest_{str(uuid.uuid4())[:8]}"
+#     session = get_session_for_user(uid)
+#     kitchen = KitchenSnapshot(load_percentage=40)
+#     history = [{"role": "assistant", "content": "🆕 New session started. How can I help you?"}]
+#     status = build_status(session, kitchen, all_menu_items)
+#     return history, session.model_dump(), {"window": []}, "", status, uid
+
+
+# # ── UI ─────────────────────────────────────────────────────────────────────────
+
+# CUSTOM_CSS = """
+# @import url('https://fonts.googleapis.com/css2?family=DM+Serif+Display:ital@0;1&family=DM+Mono:wght@300;400;500&display=swap');
+
+# :root {
+#     --bg:        #0f0e0d;
+#     --surface:   #1a1916;
+#     --border:    #2e2c28;
+#     --accent:    #e8a041;
+#     --accent2:   #c45c2e;
+#     --text:      #e8e4dc;
+#     --muted:     #7a7567;
+#     --user-bg:   #1e2a1a;
+#     --bot-bg:    #1a1916;
+#     --radius:    12px;
+# }
+
+# .message-wrap * { color: var(--text) !important; }
+# .prose * { color: var(--text) !important; }
+
+# body, .gradio-container {
+#     background: var(--bg) !important;
+#     font-family: 'DM Mono', monospace !important;
+#     color: var(--text) !important;
+# }
+
+# .dineflow-header {
+#     text-align: center;
+#     padding: 2rem 0 1rem;
+#     border-bottom: 1px solid var(--border);
+#     margin-bottom: 1.5rem;
+# }
+
+# .dineflow-header h1 {
+#     font-family: 'DM Serif Display', serif !important;
+#     font-size: 2.8rem;
+#     color: var(--accent);
+#     letter-spacing: -0.02em;
+#     margin: 0;
+# }
+
+# .dineflow-header p {
+#     color: var(--muted);
+#     font-size: 0.8rem;
+#     letter-spacing: 0.15em;
+#     text-transform: uppercase;
+#     margin: 0.4rem 0 0;
+# }
+
+# #chatbox {
+#     background: var(--surface) !important;
+#     border: 1px solid var(--border) !important;
+#     border-radius: var(--radius) !important;
+# }
+
+# #chatbox .message.user {
+#     background: var(--user-bg) !important;
+#     border: 1px solid #2a3a26 !important;
+#     color: var(--text) !important;
+#     border-radius: 10px 10px 2px 10px !important;
+#     font-family: 'DM Mono', monospace !important;
+# }
+
+# #chatbox .message.bot {
+#     background: var(--bot-bg) !important;
+#     border: 1px solid var(--border) !important;
+#     color: var(--text) !important;
+#     border-radius: 10px 10px 10px 2px !important;
+#     font-family: 'DM Mono', monospace !important;
+# }
+
+# #msg-input textarea {
+#     background: var(--surface) !important;
+#     border: 1px solid var(--border) !important;
+#     color: var(--text) !important;
+#     font-family: 'DM Mono', monospace !important;
+#     border-radius: var(--radius) !important;
+#     font-size: 0.95rem !important;
+# }
+
+# #msg-input textarea:focus {
+#     border-color: var(--accent) !important;
+#     box-shadow: 0 0 0 2px rgba(232, 160, 65, 0.15) !important;
+# }
+
+# #send-btn {
+#     background: linear-gradient(135deg, var(--accent), var(--accent2)) !important;
+#     border: none !important;
+#     color: #0f0e0d !important;
+#     font-family: 'DM Mono', monospace !important;
+#     font-weight: 500 !important;
+#     border-radius: var(--radius) !important;
+#     letter-spacing: 0.05em !important;
+# }
+
+# #send-btn:hover { opacity: 0.9 !important; transform: translateY(-1px) !important; }
+
+# #new-session-btn {
+#     background: transparent !important;
+#     border: 1px solid var(--border) !important;
+#     color: var(--muted) !important;
+#     font-family: 'DM Mono', monospace !important;
+#     border-radius: var(--radius) !important;
+#     font-size: 0.8rem !important;
+# }
+
+# #new-session-btn:hover { border-color: var(--accent) !important; color: var(--accent) !important; }
+
+# #status-panel textarea, #status-panel .prose {
+#     background: var(--surface) !important;
+#     border: 1px solid var(--border) !important;
+#     color: var(--muted) !important;
+#     font-family: 'DM Mono', monospace !important;
+#     font-size: 0.78rem !important;
+#     border-radius: var(--radius) !important;
+#     line-height: 1.8 !important;
+# }
+
+# label span {
+#     color: var(--muted) !important;
+#     font-size: 0.72rem !important;
+#     letter-spacing: 0.12em !important;
+#     text-transform: uppercase !important;
+#     font-family: 'DM Mono', monospace !important;
+# }
+
+# ::-webkit-scrollbar { width: 4px; }
+# ::-webkit-scrollbar-track { background: var(--bg); }
+# ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+# ::-webkit-scrollbar-thumb:hover { background: var(--muted); }
+# """
+
+# WELCOME_MESSAGE = (
+#     "Welcome to DineFlow. I'm your AI ordering assistant.\n\n"
+#     "Try asking:\n"
+#     "  • \"anything spicy?\"\n"
+#     "  • \"add 2 pepperoni pizzas\"\n"
+#     "  • \"what's on the menu?\""
+# )
+
+
+# def build_interface():
+#     with gr.Blocks(title="DineFlow", css=CUSTOM_CSS) as demo:
+
+#         gr.HTML("""
+#         <div class="dineflow-header">
+#             <h1>DineFlow</h1>
+#             <p>AI-powered restaurant ordering</p>
+#         </div>
+#         """)
+
+#         # Persistent state — survives within a tab session
+#         session_state = gr.State({})
+#         memory_state  = gr.State({"window": []})
+
+#         with gr.Row():
+#             with gr.Column(scale=3):
+#                 chatbot = gr.Chatbot(
+#                     value=[],
+#                     type="messages",
+#                     elem_id="chatbox",
+#                     height=500,
+#                     show_label=False,
+#                 )
+#                 with gr.Row():
+#                     msg_input = gr.Textbox(
+#                         placeholder="Type your order or question...",
+#                         show_label=False,
+#                         elem_id="msg-input",
+#                         scale=5,
+#                         container=False,
+#                     )
+#                     send_btn = gr.Button("Send →", elem_id="send-btn", scale=1, min_width=80)
+
+#             with gr.Column(scale=1):
+#                 status_box = gr.Textbox(
+#                     label="Session Status",
+#                     value="Loading...",
+#                     elem_id="status-panel",
+#                     interactive=False,
+#                     lines=10,
+#                 )
+#                 new_btn = gr.Button("↺ New Session", elem_id="new-session-btn")
+
+#         # ── on_load: fires on every page load including reloads ────────────────
+#         # Strategy: on_load() always returns the uid. A hidden Textbox carries
+#         # it to a JS change-listener that redirects the browser to ?uid=<uid>
+#         # if the param isn't already in the URL.
+#         #
+#         # Using a gr.Textbox change trigger instead of .then() because .then()
+#         # fires before gr.State values propagate to JS inputs in Gradio 5.x,
+#         # causing uid to arrive as null. The change event fires only after the
+#         # component value is set, so the uid is always populated.
+#         uid_box = gr.Textbox(visible=False, elem_id="uid-box")
+
+#         demo.load(
+#             on_load,
+#             inputs=[],
+#             outputs=[chatbot, session_state, memory_state, status_box, uid_box]
+#         )
+
+#         uid_box.change(
+#             fn=None,
+#             inputs=[uid_box],
+#             js="""(uid) => {
+#                 if (!uid || uid === 'null') return;
+#                 const params = new URLSearchParams(window.location.search);
+#                 if (!params.get('uid')) {
+#                     window.location.href = window.location.pathname + '?uid=' + uid;
+#                 }
+#             }"""
+#         )
+
+#         # ── send message ───────────────────────────────────────────────────────
+#         send_inputs  = [msg_input, chatbot, session_state, memory_state]
+#         send_outputs = [chatbot, session_state, memory_state, msg_input, status_box]
+
+#         send_btn.click(chat, inputs=send_inputs, outputs=send_outputs)
+#         msg_input.submit(chat, inputs=send_inputs, outputs=send_outputs)
+
+#         # ── new session: reset state and redirect to ?uid=<new> ───────────────
+#         new_btn.click(
+#             new_session,
+#             inputs=[],
+#             outputs=[chatbot, session_state, memory_state, msg_input, status_box, uid_box]
+#         )
+#         # uid_box.change handles the redirect automatically
+
+#     return demo
+
+
+# if __name__ == "__main__":
+#     demo = build_interface()
+#     demo.launch(server_name="0.0.0.0", server_port=7860, show_error=True)
+
+
+
+
+
+
+
+# projects/DineFlow/gradio_app.py
+import uuid
+import json
+import warnings
+import os
+import gradio as gr
+from state_machine.types import SessionState, KitchenSnapshot
+from orchestration.golden_loop import golden_loop
+from orchestration.memory_manager import MemoryManager
+
+os.environ["TOKENIZERS_PARALLELISM"] = "false"
+warnings.filterwarnings("ignore", category=FutureWarning, module="huggingface_hub")
+
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+STATE_DB_PATH = os.path.join(BASE_DIR, "session_store.json")
+
+
+# ── Session Persistence ────────────────────────────────────────────────────────
+
+def get_session_for_user(user_id: str) -> SessionState:
+    if os.path.exists(STATE_DB_PATH):
+        with open(STATE_DB_PATH, "r") as f:
+            try:
+                data = json.load(f)
+                for sess_id, state in data.items():
+                    if state.get("user_id") == user_id and state.get("order_status") == "DRAFT":
+                        return SessionState(**state)
+            except json.JSONDecodeError:
+                pass
+    return SessionState(
+        session_id=f"sess-{str(uuid.uuid4())[:4]}",
+        user_id=user_id,
+        active_agent="OrderTaker",
+        tool_budget_remaining=5
+    )
+
+
+def save_session_state(session: SessionState):
+    data = {}
+    try:
+        if os.path.exists(STATE_DB_PATH):
+            with open(STATE_DB_PATH, "r") as f:
+                content = f.read()
+                data = json.loads(content) if content else {}
+        data[session.session_id] = session.model_dump()
+        with open(STATE_DB_PATH, "w") as f:
+            json.dump(data, f, indent=2)
+    except Exception as e:
+        print(f"Critical: Could not save session state: {e}")
+
+
+def load_chat_history(session_id: str) -> list:
+    """
+    Rebuilds chat history from session_store for display on reload.
+
+    We store the full turn history under session_store[session_id]["history"]
+    as a list of {"role": ..., "content": ...} dicts — the same format
+    Gradio's Chatbot expects. On reload, we read this back and restore
+    the visual history so the user sees their prior conversation.
+
+    This is separate from memory_manager.window (short-term sliding window
+    for LLM context) and ChromaDB (long-term semantic retrieval). This is
+    purely the display layer.
+    """
+    if not os.path.exists(STATE_DB_PATH):
+        return []
+    try:
+        with open(STATE_DB_PATH, "r") as f:
+            data = json.load(f)
+        for sess_id, state in data.items():
+            if sess_id == session_id:
+                return state.get("history", [])
+    except (json.JSONDecodeError, KeyError):
+        pass
+    return []
+
+
+def save_chat_history(session_id: str, history: list):
+    """Persists the display history alongside session state."""
+    if not os.path.exists(STATE_DB_PATH):
+        return
+    try:
+        with open(STATE_DB_PATH, "r") as f:
+            data = json.load(f)
+        if session_id in data:
+            data[session_id]["history"] = history
+            with open(STATE_DB_PATH, "w") as f:
+                json.dump(data, f, indent=2)
+    except Exception as e:
+        print(f"Critical: Could not save chat history: {e}")
+
+
+def format_cart(cart: dict, all_menu_items) -> str:
+    if not cart:
+        return "Empty"
+    item_map = {item.sku: item.name for item in all_menu_items}
+    lines = [f"• {item_map.get(sku, sku)} × {qty}" for sku, qty in cart.items()]
+    return "\n".join(lines)
+
+
+def build_status(session: SessionState, kitchen: KitchenSnapshot, all_menu_items) -> str:
+    cart_str = format_cart(session.cart, all_menu_items)
+    return (
+        f"🤖 Agent: {session.active_agent}\n"
+        f"🎯 Budget: {session.tool_budget_remaining}/5\n"
+        f"🍳 Kitchen: {kitchen.load_percentage}%\n"
+        f"📋 Session: {session.session_id}\n\n"
+        f"🛒 Cart:\n{cart_str}"
+    )
+
+
+# ── Core Chat Handler ──────────────────────────────────────────────────────────
+
+def chat(user_message: str, history: list, session_state: dict, memory_state: dict):
+    """
+    Stateless handler called by Gradio on each message.
+    Session, memory, and chat history are all persisted to disk so they
+    survive page reloads. On reload, on_load() rehydrates them.
+    """
+    # Sanitize input — collapse multiline pastes into a single line.
+    # Users sometimes paste multiple items (one per line) which the LLM
+    # receives as a single ambiguous string it cannot reliably split.
+    # Joining with a comma gives the LLM a parseable list while preserving
+    # all item names — much better than silently dropping extra lines.
+    user_message = ", ".join(
+        line.strip() for line in user_message.splitlines() if line.strip()
+    )
+
+    if not user_message.strip():
+        return history, session_state, memory_state, "", ""
+
+    session = SessionState(**session_state)
+    memory = MemoryManager(session_id=session.session_id)
+    memory.window = memory_state.get("window", [])
+    kitchen = KitchenSnapshot(load_percentage=40)
+
+    try:
+        response = golden_loop(
+            session=session,
+            user_input=user_message,
+            kitchen=kitchen,
+            memory=memory
+        )
+        save_session_state(session)
+    except Exception as e:
+        response = f"⚠️ System error: {e}"
+
+    history.append({"role": "user", "content": user_message})
+    history.append({"role": "assistant", "content": response})
+
+    # Persist display history so reload can restore it
+    save_chat_history(session.session_id, history)
+
+    # Persist the short-term memory window so on_load() can restore LLM context on reload
+    if os.path.exists(STATE_DB_PATH):
+        try:
+            with open(STATE_DB_PATH, "r") as f:
+                _data = json.load(f)
+            if session.session_id in _data:
+                _data[session.session_id]["memory_window"] = memory.window
+                with open(STATE_DB_PATH, "w") as f:
+                    json.dump(_data, f, indent=2)
+        except Exception:
+            pass
+
+    from orchestration.golden_loop import all_menu_items
+    status = build_status(session, kitchen, all_menu_items)
+
+    return (
+        history,
+        session.model_dump(),
+        {"window": memory.window},
+        "",
+        status
+    )
+
+
+def on_load(request: gr.Request):
+    """
+    Fires on every page load (initial load and reload).
+
+    Isolation strategy:
+        Each browser tab gets a unique user_id via the 'uid' query param.
+        On first load:  ?uid is absent → generate a new uid, create fresh session
+        On reload:      ?uid=<existing> → look up session in session_store.json,
+                        restore session state, memory window, and chat history
+
+    This gives each tab a stable identity across reloads without requiring
+    browser cookies or localStorage. Users can also bookmark
+    http://localhost:7860/?uid=<their-uid> to return to a specific session.
+
+    Simultaneous tabs:
+        Each tab passes a different uid, so they each get their own
+        SessionState and MemoryManager.window — fully isolated.
+    """
+    from orchestration.golden_loop import all_menu_items
+
+    uid = request.query_params.get("uid", None)
+    if not uid:
+        uid = f"guest_{str(uuid.uuid4())[:8]}"
+
+    session = get_session_for_user(uid)
+    history = load_chat_history(session.session_id)
+    kitchen = KitchenSnapshot(load_percentage=40)
+
+    # Restore memory window from session store if available
+    memory_window = []
+    if os.path.exists(STATE_DB_PATH):
+        try:
+            with open(STATE_DB_PATH, "r") as f:
+                data = json.load(f)
+            for sess_id, state in data.items():
+                if sess_id == session.session_id:
+                    memory_window = state.get("memory_window", [])
+                    break
+        except Exception:
+            pass
+
+    if not history:
+        history = [{"role": "assistant", "content": WELCOME_MESSAGE}]
+
+    status = build_status(session, kitchen, all_menu_items)
+
+    # Return uid so the JS redirect can append it to the URL
+    return (
+        history,
+        session.model_dump(),
+        {"window": memory_window},
+        status,
+        uid
+    )
+
+
+def new_session():
+    """Resets to a fresh session."""
+    from orchestration.golden_loop import all_menu_items
+    uid = f"guest_{str(uuid.uuid4())[:8]}"
+    session = get_session_for_user(uid)
+    kitchen = KitchenSnapshot(load_percentage=40)
+    history = [{"role": "assistant", "content": "🆕 New session started. How can I help you?"}]
+    status = build_status(session, kitchen, all_menu_items)
+    return history, session.model_dump(), {"window": []}, "", status, uid
+
+
+# ── UI ─────────────────────────────────────────────────────────────────────────
+
+CUSTOM_CSS = """
+@import url('https://fonts.googleapis.com/css2?family=DM+Serif+Display:ital@0;1&family=DM+Mono:wght@300;400;500&display=swap');
+
+:root {
+    --bg:        #0f0e0d;
+    --surface:   #1a1916;
+    --border:    #2e2c28;
+    --accent:    #e8a041;
+    --accent2:   #c45c2e;
+    --text:      #e8e4dc;
+    --muted:     #7a7567;
+    --user-bg:   #1e2a1a;
+    --bot-bg:    #1a1916;
+    --radius:    12px;
+}
+
+.message-wrap * { color: var(--text) !important; }
+.prose * { color: var(--text) !important; }
+
+body, .gradio-container {
+    background: var(--bg) !important;
+    font-family: 'DM Mono', monospace !important;
+    color: var(--text) !important;
+}
+
+.dineflow-header {
+    text-align: center;
+    padding: 2rem 0 1rem;
+    border-bottom: 1px solid var(--border);
+    margin-bottom: 1.5rem;
+}
+
+.dineflow-header h1 {
+    font-family: 'DM Serif Display', serif !important;
+    font-size: 2.8rem;
+    color: var(--accent);
+    letter-spacing: -0.02em;
+    margin: 0;
+}
+
+.dineflow-header p {
+    color: var(--muted);
+    font-size: 0.8rem;
+    letter-spacing: 0.15em;
+    text-transform: uppercase;
+    margin: 0.4rem 0 0;
+}
+
+#chatbox {
+    background: var(--surface) !important;
+    border: 1px solid var(--border) !important;
+    border-radius: var(--radius) !important;
+}
+
+#chatbox .message.user {
+    background: var(--user-bg) !important;
+    border: 1px solid #2a3a26 !important;
+    color: var(--text) !important;
+    border-radius: 10px 10px 2px 10px !important;
+    font-family: 'DM Mono', monospace !important;
+}
+
+#chatbox .message.bot {
+    background: var(--bot-bg) !important;
+    border: 1px solid var(--border) !important;
+    color: var(--text) !important;
+    border-radius: 10px 10px 10px 2px !important;
+    font-family: 'DM Mono', monospace !important;
+}
+
+#msg-input textarea {
+    background: var(--surface) !important;
+    border: 1px solid var(--border) !important;
+    color: var(--text) !important;
+    font-family: 'DM Mono', monospace !important;
+    border-radius: var(--radius) !important;
+    font-size: 0.95rem !important;
+    resize: none !important;
+    max-height: 52px !important;
+    overflow-y: hidden !important;
+}
+
+#msg-input textarea:focus {
+    border-color: var(--accent) !important;
+    box-shadow: 0 0 0 2px rgba(232, 160, 65, 0.15) !important;
+}
+
+#send-btn {
+    background: linear-gradient(135deg, var(--accent), var(--accent2)) !important;
+    border: none !important;
+    color: #0f0e0d !important;
+    font-family: 'DM Mono', monospace !important;
+    font-weight: 500 !important;
+    border-radius: var(--radius) !important;
+    letter-spacing: 0.05em !important;
+}
+
+#send-btn:hover { opacity: 0.9 !important; transform: translateY(-1px) !important; }
+
+#new-session-btn {
+    background: transparent !important;
+    border: 1px solid var(--border) !important;
+    color: var(--muted) !important;
+    font-family: 'DM Mono', monospace !important;
+    border-radius: var(--radius) !important;
+    font-size: 0.8rem !important;
+}
+
+#new-session-btn:hover { border-color: var(--accent) !important; color: var(--accent) !important; }
+
+#status-panel textarea, #status-panel .prose {
+    background: var(--surface) !important;
+    border: 1px solid var(--border) !important;
+    color: var(--muted) !important;
+    font-family: 'DM Mono', monospace !important;
+    font-size: 0.78rem !important;
+    border-radius: var(--radius) !important;
+    line-height: 1.8 !important;
+}
+
+label span {
+    color: var(--muted) !important;
+    font-size: 0.72rem !important;
+    letter-spacing: 0.12em !important;
+    text-transform: uppercase !important;
+    font-family: 'DM Mono', monospace !important;
+}
+
+::-webkit-scrollbar { width: 4px; }
+::-webkit-scrollbar-track { background: var(--bg); }
+::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+::-webkit-scrollbar-thumb:hover { background: var(--muted); }
+"""
+
+WELCOME_MESSAGE = (
+    "Welcome to DineFlow. I'm your AI ordering assistant.\n\n"
+    "Try asking:\n"
+    "  • \"anything spicy?\"\n"
+    "  • \"add 2 pepperoni pizzas\"\n"
+    "  • \"what's on the menu?\""
+)
+
+
+def build_interface():
+    with gr.Blocks(title="DineFlow", css=CUSTOM_CSS) as demo:
+
+        gr.HTML("""
+        <div class="dineflow-header">
+            <h1>DineFlow</h1>
+            <p>AI-powered restaurant ordering</p>
+        </div>
+        """)
+
+        # Persistent state — survives within a tab session
+        session_state = gr.State({})
+        memory_state  = gr.State({"window": []})
+
+        with gr.Row():
+            with gr.Column(scale=3):
+                chatbot = gr.Chatbot(
+                    value=[],
+                    type="messages",
+                    elem_id="chatbox",
+                    height=500,
+                    show_label=False,
+                )
+                with gr.Row():
+                    msg_input = gr.Textbox(
+                        placeholder="Type your order or question...",
+                        show_label=False,
+                        elem_id="msg-input",
+                        scale=5,
+                        container=False,
+                    )
+                    send_btn = gr.Button("Send →", elem_id="send-btn", scale=1, min_width=80)
+
+            with gr.Column(scale=1):
+                status_box = gr.Textbox(
+                    label="Session Status",
+                    value="Loading...",
+                    elem_id="status-panel",
+                    interactive=False,
+                    lines=10,
+                )
+                new_btn = gr.Button("↺ New Session", elem_id="new-session-btn")
+
+        # ── on_load: fires on every page load including reloads ────────────────
+        # Strategy: on_load() always returns the uid. A hidden Textbox carries
+        # it to a JS change-listener that redirects the browser to ?uid=<uid>
+        # if the param isn't already in the URL.
+        #
+        # Using a gr.Textbox change trigger instead of .then() because .then()
+        # fires before gr.State values propagate to JS inputs in Gradio 5.x,
+        # causing uid to arrive as null. The change event fires only after the
+        # component value is set, so the uid is always populated.
+        uid_box = gr.Textbox(visible=False, elem_id="uid-box")
+
+        demo.load(
+            on_load,
+            inputs=[],
+            outputs=[chatbot, session_state, memory_state, status_box, uid_box]
+        )
+
+        uid_box.change(
+            fn=None,
+            inputs=[uid_box],
+            js="""(uid) => {
+                if (!uid || uid === 'null') return;
+                const params = new URLSearchParams(window.location.search);
+                if (!params.get('uid')) {
+                    window.location.href = window.location.pathname + '?uid=' + uid;
+                }
+            }"""
+        )
+
+        # Prevent multiline input at the UI level.
+        # Intercepts Enter key on the textarea and strips any newlines that
+        # slip through (e.g. from copy-paste). Plain Enter submits the form.
+        # Shift+Enter is also blocked — users should not be able to enter
+        # multi-line orders since the system handles one intent per turn.
+        gr.HTML("""
+        <script>
+        document.addEventListener('DOMContentLoaded', () => {
+            function attachInputGuard() {
+                const textarea = document.querySelector('#msg-input textarea');
+                if (!textarea) { setTimeout(attachInputGuard, 300); return; }
+
+                // Strip newlines on every input event (handles paste)
+                textarea.addEventListener('input', () => {
+                    const pos = textarea.selectionStart;
+                    const cleaned = textarea.value.replace(/\n/g, ' ').replace(/\r/g, '');
+                    if (cleaned !== textarea.value) {
+                        textarea.value = cleaned;
+                        textarea.setSelectionRange(pos, pos);
+                    }
+                });
+
+                // Block Shift+Enter producing newlines
+                textarea.addEventListener('keydown', (e) => {
+                    if (e.key === 'Enter' && e.shiftKey) {
+                        e.preventDefault();
+                    }
+                });
+            }
+            attachInputGuard();
+        });
+        </script>
+        """)
+
+        # ── send message ───────────────────────────────────────────────────────
+        send_inputs  = [msg_input, chatbot, session_state, memory_state]
+        send_outputs = [chatbot, session_state, memory_state, msg_input, status_box]
+
+        send_btn.click(chat, inputs=send_inputs, outputs=send_outputs)
+        msg_input.submit(chat, inputs=send_inputs, outputs=send_outputs)
+
+        # ── new session: reset state and redirect to ?uid=<new> ───────────────
+        new_btn.click(
+            new_session,
+            inputs=[],
+            outputs=[chatbot, session_state, memory_state, msg_input, status_box, uid_box]
+        )
+        # uid_box.change handles the redirect automatically
+
+    return demo
+
+
+if __name__ == "__main__":
+    demo = build_interface()
+    demo.launch(server_name="0.0.0.0", server_port=7860, show_error=True)

@@ -1,0 +1,12 @@
+pydantic>=2.6
+pytest>=8.0
+openai>=1.0.0
+python-dotenv
+numpy==1.26.4
+chromadb>=0.4.24
+rank-bm25>=0.2.2
+torch==2.2.2
+transformers==4.41.2
+sentence-transformers==3.0.1
+tabulate
+gradio>=4.0.0,<6.0.0
