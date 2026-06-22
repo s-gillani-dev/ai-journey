@@ -1,0 +1,29 @@
+<script type="importmap">
+  {
+    "imports": {
+      "lit": "https://esm.sh/lit@^3.3.0",
+      "lit/": "https://esm.sh/lit@^3.3.0/",
+      "@lit/context": "https://esm.sh/@lit/context@^1.1.5",
+      "@google/genai": "https://esm.sh/@google/genai@^1.15.0",
+      "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js",
+      "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/"
+    }
+  }
+</script>
+<body>
+  <gdm-live-audio></gdm-live-audio>
+<script type="module">
+  import('https://cdn.jsdelivr.net/gh/met4citizen/TalkingHead@1.7/modules/talkinghead.mjs')
+    .then(module => {
+      window.TalkingHead = module.TalkingHead;
+      console.log('[TalkingHead] Library loaded');
+      window.dispatchEvent(new Event('talkinghead-loaded'));
+    })
+    .catch(err => {
+      console.error('[TalkingHead] Failed to load:', err);
+      window.dispatchEvent(new Event('talkinghead-error'));
+    });
+</script>
+<script type="module" src="/index.tsx"></script>
+</body>
+<link rel="stylesheet" href="/index.css">
